@@ -1,0 +1,9 @@
+{
+  "name": "pathfinder-minesweeper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "寻路扫雷：用经典扫雷数字，推理一条通往终点的路。",
+  "engines": { "node": ">=22" },
+  "scripts": { "dev": "node scripts/serve.mjs", "test": "node --test", "build": "node scripts/build.mjs" }
+}
