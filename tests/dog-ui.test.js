@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { createGame, makeBoard, deduce, frontier } from '../src/engine.js';
+import { createGame, makeBoard, localMineHighlights, frontier } from '../src/engine.js';
 import { DOG_SVG, MEAT_SVG, centerFromRects, interpolatePoint } from '../src/visuals.js';
 
 const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
@@ -29,9 +29,9 @@ function element(rect = {}) {
 function renderFixture(game) {
   const cells = Array.from({ length: game.revealed.length }, () => element()), nodes = new Map();
   const scope = {
-    game, cells, frontier, deduce, MEAT_SVG, selectedIndex: game.board.start,
+    game, cells, frontier, localMineHighlights, MEAT_SVG, selectedIndex: game.board.start,
     currentHint: null, levelShown: game.level, coord: String,
-    buildBoard() {}, drawRoute() {}, placeRunner() {},
+    buildBoard() {}, placeRunner() {},
     $(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
   };
   const renderer = app.match(/function renderBoard\(\) \{([\s\S]*?)\n\}\nfunction renderResult/);
@@ -57,28 +57,32 @@ test('dog and bone-in meat are self-contained artwork with separate endpoint clu
   assert.match(cells[2].attributes['aria-label'], /周围3颗雷.*终点/);
 });
 
-test('automatic mine highlights follow visible proofs and persist after flagging', () => {
+test('automatic mine highlights use one local number without chaining and never insert flags', () => {
   const game = createGame(makeBoard(3, 3, [0, 1, 4]));
   game.status = 'playing'; game.revealed.fill(false);
-  for (const i of [3, 5, 6, 7, 8]) game.revealed[i] = true;
+  for (const i of [5, 6, 7, 8]) game.revealed[i] = true;
   const { render, cells } = renderFixture(game);
+  const before = [...game.flags];
   render();
-  assert.deepEqual([...deduce(game).mines].sort(), [0, 1, 4]);
-  for (const i of [0, 1, 4]) {
-    assert.ok(cells[i].classList.contains('deduced-mine'));
-    assert.match(cells[i].attributes['aria-label'], /由已打开数字确定有雷/);
-    assert.equal(cells[i].textContent, '✳');
-  }
-  assert.ok(cells[7].classList.contains('evidence-clue'));
-  assert.ok(!cells[2].classList.contains('deduced-mine'));
+  // The 1 at cell 8 has exactly one unopened neighbor (4). Cell 1 can
+  // be proved by combining clues, but the automatic UI must not do that.
+  assert.deepEqual([...localMineHighlights(game)], [4]);
+  assert.ok(cells[4].classList.contains('deduced-mine'));
+  assert.equal(cells[4].textContent, '✳');
+  assert.match(cells[4].attributes['aria-label'], /有雷/);
+  assert.ok(!cells[1].classList.contains('deduced-mine'));
+  assert.deepEqual(game.flags, before, 'highlighting must not place flags');
+  assert.ok(cells.every(cell => !cell.classList.contains('evidence-clue')));
   game.flags[4] = true; render();
   assert.ok(cells[4].classList.contains('deduced-mine'));
   assert.equal(cells[4].textContent, '⚑');
+  assert.ok(!cells[1].classList.contains('deduced-mine'), 'flags must not be subtracted from other clues');
   game.flags[4] = false; render();
   assert.ok(cells[4].classList.contains('deduced-mine'));
   for (const status of ['running', 'won']) {
-    game.status = status; render();
-    assert.ok(cells[4].classList.contains('deduced-mine'), `${status} must retain visible deductions`);
+    game.status = status; game.runPath = [6, 7, 8, 5, 2]; render();
+    assert.ok(cells[4].classList.contains('deduced-mine'), `${status} must retain visible local matches`);
+    assert.ok(cells.every(cell => !cell.classList.contains('evidence-clue') && !cell.classList.contains('route-cell')));
   }
 });
 
@@ -95,24 +99,28 @@ test('uncertain player flags and unread hidden mines do not produce automatic hi
   assert.equal(cells.filter(cell => cell.classList.contains('deduced-mine')).length, 0);
 });
 
-test('route polyline and dog use the same wrapper-relative coordinates despite nested offsets', () => {
+test('dog still follows the opened path coordinates without route lines or painted route cells', () => {
   const rectangles = [
     { left: 130.5, top: 230.25, width: 49.5, height: 50.5 },
     { left: 130.5, top: 285.25, width: 49.5, height: 50.5 },
   ];
   const surface = { left: 120.5, top: 220.25, width: 110, height: 180 };
   const cells = rectangles.map(rect => element(rect)), nodes = new Map();
-  const wrap = element(surface), runner = element(), trail = element();
-  nodes.set('board-wrap', wrap); nodes.set('runner', runner); nodes.set('trail', trail);
-  const scope = { cells, centerFromRects, interpolatePoint, game: { status: 'playing', runPath: [0, 1] }, $(id) { return nodes.get(id); } };
+  const wrap = element(surface), runner = element();
+  nodes.set('board-wrap', wrap); nodes.set('runner', runner);
+  const scope = { cells, centerFromRects, interpolatePoint, game: { status: 'playing', runPath: [0, 1] }, $(id) { assert.ok(nodes.has(id), `unexpected route overlay #${id}`); return nodes.get(id); } };
   const functions = app.match(/function centerOf\(index\) \{[\s\S]*?\nfunction renderBoard/)[0].replace(/\nfunction renderBoard$/, '');
-  runInNewContext(`${functions}\nplaceRunner(0, 1, .5); drawRoute();`, scope);
-  const points = [...trail.innerHTML.matchAll(/([\d.]+),([\d.]+)/g)].map(([, x, y]) => [Number(x), Number(y)]);
-  assert.deepEqual(points, [[34.75, 35.25], [34.75, 90.25]]);
+  runInNewContext(`${functions}\nplaceRunner(0, 1, .5);`, scope);
   assert.equal(runner.style.left, '34.75px');
   assert.equal(runner.style.top, '62.75px');
-  assert.equal(trail.attributes.viewBox, '0 0 110 180');
   assert.equal(runner.dataset.cell, '1');
+  runInNewContext('placeRunner(1);', scope);
+  assert.equal(runner.style.top, '90.25px');
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /id="trail"|key-evidence/);
+  assert.doesNotMatch(app, /function drawRoute|<polyline|route-cell|evidence-clue/);
+  assert.doesNotMatch(css, /\.evidence-clue|\.route-cell|\.trail(?:[\s{.]|$)/);
 });
 
 test('viewport scroll changes do not shift dog position relative to the board', () => {

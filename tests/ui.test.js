@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { createGame, makeBoard, explore, frontier, deduce } from '../src/engine.js';
+import { createGame, makeBoard, explore, frontier, localMineHighlights } from '../src/engine.js';
 import { MEAT_SVG } from '../src/visuals.js';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -27,8 +27,11 @@ test('handbook explains guaranteed routes, stationary exploration and delayed ar
   assert.match(help, /仅打开终点并不算通关/);
   assert.match(help, /按最短路线跑到 E 的带骨肉旁，再显示通关结果/);
   assert.match(help, /不要求按点击顺序经过每一格/);
-  assert.match(help, /高亮只根据可见数字推理/);
-  assert.match(help, /不把你的旗帜当作事实/);
+  assert.match(help, /某个已打开数字周围八格内，未打开格数恰好等于该数字/);
+  assert.match(help, /插旗格仍计入未打开格/);
+  assert.match(help, /不按旗帜减雷数，不进行组合或连锁推理/);
+  assert.match(help, /不自动插旗；数字本身不高亮/);
+  assert.doesNotMatch(help, /金色框|相关数字.*高亮/);
   assert.doesNotMatch(help, /点击已打开的格子可自动寻路|沿已知安全路线走过去/);
 });
 
@@ -64,8 +67,8 @@ test('opened endpoint exposes its numerical clue as well as its E marker', () =>
   });
   const cells = Array.from({ length: 9 }, element), nodes = new Map();
   const scope = {
-    game, cells, frontier, deduce, MEAT_SVG, selectedIndex: game.board.start, currentHint: null,
-    levelShown: game.level, coord: String, buildBoard() {}, drawRoute() {}, placeRunner() {},
+    game, cells, frontier, localMineHighlights, MEAT_SVG, selectedIndex: game.board.start, currentHint: null,
+    levelShown: game.level, coord: String, buildBoard() {}, placeRunner() {},
     $(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
   };
   const renderer = app.match(/function renderBoard\(\) \{([\s\S]*?)\n\}\nfunction renderResult/);

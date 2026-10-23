@@ -127,6 +127,17 @@ export function toggleFlag(game, index) {
   game.flags[index] = !game.flags[index];
   return true;
 }
+// Passive assistance is deliberately local: compare the original digit with
+// all unopened neighbors, including flags. Never chain deductions or subtract flags.
+export function localMineHighlights(game) {
+  const { board, revealed } = game, mines = new Set();
+  for (let i = 0; i < revealed.length; i++) {
+    if (!revealed[i] || board.clues[i] <= 0) continue;
+    const unopened = neighbors(board, i).filter(j => !revealed[j]);
+    if (unopened.length === board.clues[i]) for (const j of unopened) mines.add(j);
+  }
+  return mines;
+}
 function subset(a, b) { return a.every(i => b.includes(i)); }
 export function deduce(game) {
   const { board, revealed } = game, safe = new Set([board.start, board.goal]), mines = new Set();
@@ -158,7 +169,7 @@ export function deduce(game) {
 }
 export function getHint(game) {
   if (game.status !== 'playing') return null;
-  const { safe, mines } = deduce(game), edge = frontier(game);
+  const { safe } = deduce(game), mines = localMineHighlights(game), edge = frontier(game);
   // Flags are player hypotheses; they are never treated as proof.
   for (const i of safe) if (game.flags[i]) return { type: 'unflag', index: i, text: '这格可由线索确定安全，请先移除旗帜。' };
   for (const i of safe) if (edge.has(i) && !game.revealed[i]) return { type: 'safe', index: i, text: '根据已打开的数字，这一格一定安全。小狗会等在起点，先把道路探出来。' };
