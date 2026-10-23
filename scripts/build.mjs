@@ -8,7 +8,7 @@ await writeFile(new URL('.nojekyll', dist), '');
 const html = await readFile(new URL('index.html', root), 'utf8');
 const css = await readFile(new URL('src/styles.css', root), 'utf8');
 const icon = await readFile(new URL('icon.svg', root));
-const sources = await Promise.all(['levels.js', 'engine.js', 'visuals.js', 'app.js'].map(name => readFile(new URL(`src/${name}`, root), 'utf8')));
+const sources = await Promise.all(['levels.js', 'engine.js', 'visuals.js', 'tutorial-model.js', 'tutorial.js', 'app.js'].map(name => readFile(new URL(`src/${name}`, root), 'utf8')));
 const script = sources.map(source => source.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')).join('\n');
 const standalone = html.replace('<link rel="stylesheet" href="./src/styles.css">', `<style>${css}</style>`)
   .replace('./icon.svg', `data:image/svg+xml;base64,${icon.toString('base64')}`)

@@ -8,6 +8,8 @@
 
 ## 规则
 
+首次进入自动打开约一分钟的 4×4 新手练习：读数字 → 插旗 → 空白展开 → 免费线索 → 接通终点看小狗跑步。点错不会失败，教程独立于正式进度；支持跳过、Esc 退出和顶部「新手教程」随时重玩。完成或跳过后，此浏览器不再自动弹出。
+
 **每关保证至少有一条从左下 S 到右上 E 的可行道路，并通过数字推理验证，无需猜雷。**
 
 1. 点击任意未插旗的未知格探雷，小狗始终留在 S，不随点击移动。
@@ -61,6 +63,7 @@ npm run build
 | src/app.js | 输入、连续跑步动画、暂停、结果与界面 |
 | src/styles.css | 响应式界面与跑步视觉 |
 | src/visuals.js | 本地小狗、带骨肉 SVG 与统一坐标换算 |
+| src/tutorial-model.js、src/tutorial.js | 独立教程状态与五步互动引导 |
 | tests/engine.test.js | 规则 agent 的独立验证 |
 | tests/ui.test.js、tests/dog-ui.test.js | 界面 agent 的独立验证 |
 | tests/shortest.test.js | 随机已开区域最短路径与最少转弯验证 |

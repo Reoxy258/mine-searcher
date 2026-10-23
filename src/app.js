@@ -1,6 +1,7 @@
 import { LEVELS, CHAPTERS } from './levels.js';
 import { generateBoard, createGame, explore, finishRun, starsFor, toggleFlag, getHint, localMineHighlights, frontier, saveProgress, loadProgress } from './engine.js';
 import { DOG_SVG, MEAT_SVG, centerFromRects, interpolatePoint } from './visuals.js';
+import { setupTutorial } from './tutorial.js';
 const $ = id => document.getElementById(id);
 $('runner').innerHTML = `<span class="dog-avatar">${DOG_SVG}</span>`;
 let storage;
@@ -229,3 +230,4 @@ else if (game.status === 'lost') setStatus('上次触雷后已结束。小狗仍
 else if (game.status === 'won') setStatus('已完成这条路线，继续下一关吧。');
 else if (restored?.migrated) setStatus('已保留旧版星级。新规则已生效，本关重新开始：先探通道路，小狗再跑向终点。');
 else setStatus('每关至少有一条可行道路。先探雷，小狗在 S 等待；安全格四向连通 S 和 E 后自动出发。');
+setupTutorial(storage);
