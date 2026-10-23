@@ -16,13 +16,25 @@
 /* Scout waits at S during exploration; only the final safe route is animated. */
 .game-badges{display:flex;align-items:flex-end;flex-direction:column;gap:6px}.difficulty-button{border:1px solid #cddfc7;background:#edf5e8;color:#496c42;padding:7px 9px;border-radius:6px;min-height:32px;font-size:10px;white-space:nowrap}
 .runner{position:absolute;z-index:6;pointer-events:none;transform:translate(-50%,-50%);min-width:14px;min-height:14px}
-.runner .scout{display:block;position:absolute;inset:0;border-radius:50%;background:#187569;box-shadow:0 2px 4px #07534430,0 0 0 3px #ffffffe0}
-.runner .scout::before{content:"";position:absolute;left:35%;top:15%;width:25%;height:25%;border:2px solid #f6fff1;border-radius:50%}
-.runner .scout::after{content:"";position:absolute;left:31%;bottom:18%;width:38%;height:25%;background:#f6fff1;border-radius:50% 50% 4px 4px}
-.runner.running .scout{animation:scoutRun .25s ease-in-out infinite}.cell.route-cell{background:#e2efd8;border-color:#bed0b0}.cell.route-cell.goal{background:#efe0a8}
+
+
+
+.cell.route-cell{background:#e2efd8;border-color:#bed0b0}.cell.route-cell.goal{background:#efe0a8}
 .map-scroll.is-running{max-height:65vh;overflow:auto;scroll-behavior:auto}.trail{opacity:.4}.trail polyline{stroke-width:4;stroke:#63904c}.game-card:has(.runner.running) .board{pointer-events:none}
 @keyframes scoutRun{0%,100%{transform:translateY(0) rotate(-7deg)}50%{transform:translateY(-3px) rotate(7deg)}}
-@media(max-width:760px){.game-heading{gap:10px}.game-badges .logic-badge{font-size:8px;padding:5px}.difficulty-button{font-size:9px;padding:6px}.runner .scout{box-shadow:0 2px 3px #07534430,0 0 0 2px #ffffffe0}.runner .scout::before{border-width:1.5px}.mode-switch button{padding-left:10px;padding-right:10px}.tool-actions{gap:10px}.tool-button{font-size:10px}.map-scroll.is-running{max-height:65dvh}}
+@media(max-width:760px){.game-heading{gap:10px}.game-badges .logic-badge{font-size:8px;padding:5px}.difficulty-button{font-size:9px;padding:6px}.mode-switch button{padding-left:10px;padding-right:10px}.tool-actions{gap:10px}.tool-button{font-size:10px}.map-scroll.is-running{max-height:65dvh}}
 @media(max-width:370px){.game-heading h2{font-size:14px}.game-badges .logic-badge{font-size:7px}.game-toolbar{padding-left:10px;padding-right:10px}.mode-switch button{padding-left:8px;padding-right:8px}.tool-actions{gap:8px}.tool-button>span{margin-right:2px}}
-@media(prefers-reduced-motion:reduce){.runner.running .scout{animation:none}}
+@media(prefers-reduced-motion:reduce){}
 .cell .endpoint-label{position:absolute;right:3px;bottom:2px;font:700 8px/1 sans-serif;color:#775822}.cell.compact .endpoint-label{right:2px;font-size:7px}
+
+/* Cartoon dog, food destination, and evidence from visible clues. */
+.runner{min-width:16px;min-height:16px}.dog-avatar{display:block;width:100%;height:100%;transform-origin:center}.dog-art{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 1px 1px #67401e30)}
+.runner[data-facing=left] .dog-avatar{transform:scaleX(-1)}.dog-tail{transform-origin:25px 64px;animation:tailWag 1.2s ease-in-out infinite}.runner.running .dog-tail{animation-duration:.24s}.runner.running .dog-leg-front{transform-origin:65px 70px;animation:dogStep .24s ease-in-out infinite}.runner.running .dog-leg-back{transform-origin:33px 73px;animation:dogStep .24s ease-in-out infinite reverse}
+.runner.running .dog-art{animation:dogBounce .24s ease-in-out infinite}.runner:not(.running) .dog-eye{animation:dogBlink 5s ease-in-out infinite;transform-origin:center;transform-box:fill-box}
+.cell .meat-art{width:74%;height:74%;display:block;pointer-events:none}.cell .goal-clue{position:absolute;top:3px;left:3px;min-width:16px;min-height:16px;display:grid;place-items:center;border-radius:4px;background:#fffffff2;color:#775822;font:700 14px/1 sans-serif;z-index:2}.cell.compact .goal-clue{font-size:10px;min-width:11px;min-height:11px;left:2px;top:2px}.cell .endpoint-label{z-index:2}
+.cell.deduced-mine{background:#ffe5db;border:2px solid #c76850;box-shadow:0 2px 0 #d6a18a;color:#a33e2e;font-size:24px}.cell.deduced-mine.unknown::after{display:none}.cell.deduced-mine.flagged{background:#f7d5c6;color:#873b28}.cell.evidence-clue{box-shadow:inset 0 0 0 2px #cbaa53;background:#faf2d7}.cell.evidence-clue.route-cell{background:#eaf0d5}.cell.compact.deduced-mine{font-size:16px}
+.key-danger{width:11px;height:11px;display:inline-block;border:1px solid #bb5c47;background:#ffe5db;border-radius:2px}.key-evidence{width:11px;height:11px;display:inline-block;border:2px solid #cbaa53;background:#faf2d7;border-radius:2px}.map-key{flex-wrap:wrap;gap:8px 16px}.deduction-summary{color:#8b6548;font-size:10px;line-height:1.7;text-align:center;margin:12px 0 0}
+@keyframes tailWag{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(12deg)}}@keyframes dogStep{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(12deg)}}@keyframes dogBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}@keyframes dogBlink{0%,42%,46%,100%{transform:scaleY(1)}44%{transform:scaleY(.1)}}
+@media(max-width:760px){.map-key{gap:8px 12px}.deduction-summary{font-size:9px}.cell.deduced-mine{font-size:20px}.cell.compact.deduced-mine{font-size:15px}}
+@media(prefers-reduced-motion:reduce){.dog-art,.dog-tail,.dog-leg-front,.dog-leg-back,.dog-eye{animation:none!important}}
+.board{grid-template-rows:repeat(var(--rows),minmax(0,1fr))}.cell .meat-art{position:absolute;left:15%;top:15%;width:70%;height:70%}

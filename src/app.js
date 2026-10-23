@@ -1,6 +1,8 @@
 import { LEVELS, CHAPTERS } from './levels.js';
-import { generateBoard, createGame, explore, finishRun, starsFor, toggleFlag, getHint, frontier, saveProgress, loadProgress } from './engine.js';
+import { generateBoard, createGame, explore, finishRun, starsFor, toggleFlag, getHint, deduce, frontier, saveProgress, loadProgress } from './engine.js';
+import { DOG_SVG, MEAT_SVG, centerFromRects, interpolatePoint } from './visuals.js';
 const $ = id => document.getElementById(id);
+$('runner').innerHTML = `<span class="dog-avatar">${DOG_SVG}</span>`;
 let storage;
 try { storage = window.localStorage; } catch { storage = null; }
 const restored = loadProgress(storage);
@@ -36,7 +38,7 @@ function setMode(value, announce = true) {
   mode = value;
   $('walk-mode').setAttribute('aria-pressed', String(mode === 'walk'));
   $('flag-mode').setAttribute('aria-pressed', String(mode === 'flag'));
-  if (announce && game.status === 'playing') setStatus(mode === 'flag' ? '插旗模式：点击未知格标记或撤销。F 返回探雷。人物仍留在 S。' : '探雷模式：点击任意未知格。人物在 S 等待，道路连通后才出发。');
+  if (announce && game.status === 'playing') setStatus(mode === 'flag' ? '插旗模式：点击未知格标记或撤销。F 返回探雷。小狗仍留在 S。' : '探雷模式：点击任意未知格。小狗在 S 等待，道路连通后才出发。');
 }
 function renderLevels() {
   const markup = CHAPTERS.map(chapter => {
@@ -58,14 +60,15 @@ function buildBoard() {
   cells = [...$('board').children]; levelShown = game.level;
 }
 function centerOf(index) {
-  const c = cells[index]; return { x: c.offsetLeft + c.offsetWidth / 2, y: c.offsetTop + c.offsetHeight / 2, size: Math.min(c.offsetWidth, c.offsetHeight) * .62 };
+  return centerFromRects(cells[index].getBoundingClientRect(), $('board-wrap').getBoundingClientRect());
 }
 function placeRunner(from, to = from, fraction = 0) {
   if (!cells[from] || !cells[to]) return;
-  const a = centerOf(from), b = centerOf(to), x = a.x + (b.x - a.x) * fraction, y = a.y + (b.y - a.y) * fraction;
+  const a = centerOf(from), b = centerOf(to), { x, y } = interpolatePoint(a, b, fraction);
   const runner = $('runner');
   runner.style.left = `${x}px`; runner.style.top = `${y}px`; runner.style.width = `${a.size}px`; runner.style.height = `${a.size}px`;
   runner.dataset.cell = String(fraction < .5 ? from : to);
+  if (b.x !== a.x) runner.dataset.facing = b.x > a.x ? 'right' : 'left';
   if (game.status === 'running') {
     const view = $('map-scroll'), axisWidth = $('axis-side').offsetWidth + 2;
     view.scrollLeft = Math.max(0, x + axisWidth - view.clientWidth / 2);
@@ -73,25 +76,37 @@ function placeRunner(from, to = from, fraction = 0) {
   }
 }
 function drawRoute() {
-  const route = game.runPath, board = $('board');
-  $('trail').setAttribute('viewBox', `0 0 ${board.clientWidth} ${board.clientHeight}`);
+  const route = game.runPath, surface = $('board-wrap').getBoundingClientRect();
+  $('trail').setAttribute('viewBox', `0 0 ${surface.width} ${surface.height}`);
   $('trail').innerHTML = route.length ? `<polyline points="${route.map(i => { const p = centerOf(i); return `${p.x},${p.y}`; }).join(' ')}"/>` : '';
 }
 function renderBoard() {
   if (levelShown !== game.level) buildBoard();
   const { board } = game, edge = game.status === 'playing' ? frontier(game) : new Set(), route = new Set(game.runPath);
+  const certainMines = game.status !== 'lost' ? deduce(game).mines : new Set();
+  const evidence = new Set();
+  for (const mine of certainMines) {
+    const x = mine % board.cols, y = Math.floor(mine / board.cols);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy, i = ny * board.cols + nx;
+      if (nx >= 0 && nx < board.cols && ny >= 0 && ny < board.rows && game.revealed[i] && board.clues[i] > 0) evidence.add(i);
+    }
+  }
   $('board').classList.toggle('finished', game.status !== 'playing');
-  $('board').setAttribute('aria-label', `第${game.level + 1}关。人物${game.status === 'running' ? '正在沿安全道路跑向终点' : game.status === 'won' ? '已抵达终点' : '在起点S等待'}。方向键选格，Enter探雷，F切换插旗。`);
+  $('board').setAttribute('aria-label', `第${game.level + 1}关。小狗${game.status === 'running' ? '正在沿安全道路跑向终点' : game.status === 'won' ? '已抵达终点' : '在起点S等待'}。方向键选格，Enter探雷，F切换插旗。`);
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i], open = game.revealed[i], mine = game.status === 'lost' && board.mines[i];
     cell.className = ['cell', board.cols >= 10 ? 'compact' : '', open ? `open n${board.clues[i]}` : !game.flags[i] && !mine && i !== board.goal ? 'unknown' : '', edge.has(i) && !game.flags[i] && i !== board.goal ? 'edge' : '', game.flags[i] ? 'flagged' : '', i === board.start ? 'start' : '', i === board.goal ? 'goal' : '', mine ? 'bomb' : '', i === game.exploded ? 'exploded' : '', game.status === 'lost' && game.flags[i] && !board.mines[i] ? 'wrong-flag' : '', route.has(i) ? 'route-cell' : '', i === game.position ? 'player' : '', currentHint?.index === i ? 'hint-cell' : ''].join(' ');
-    cell.textContent = mine ? '✳' : game.flags[i] ? '⚑' : i === board.goal ? 'E' : i === board.start ? 'S' : open && board.clues[i] ? String(board.clues[i]) : '';
-    if (i === board.goal && open) cell.innerHTML = `${board.clues[i] || ''}<small class="endpoint-label" aria-hidden="true">E</small>`;
-    const info = mine ? '地雷' : game.flags[i] ? '已插旗' : open ? `已探索，周围${board.clues[i]}颗雷` : '未知格';
-    cell.setAttribute('aria-label', `${coord(i)}，${info}${i === board.goal ? '，终点，保证安全' : ''}${i === board.start ? '，起点' : ''}${i === game.position && game.status !== 'running' ? '，人物位置' : ''}`);
+    cell.classList.toggle('deduced-mine', certainMines.has(i));
+    cell.classList.toggle('evidence-clue', evidence.has(i));
+    cell.textContent = mine ? '✳' : game.flags[i] ? '⚑' : i === board.goal ? 'E' : i === board.start ? 'S' : open && board.clues[i] ? String(board.clues[i]) : certainMines.has(i) ? '✳' : '';
+    if (i === board.goal) cell.innerHTML = `${MEAT_SVG}${open && board.clues[i] ? `<strong class="goal-clue">${board.clues[i]}</strong>` : ''}<small class="endpoint-label" aria-hidden="true">E</small>`;
+    const info = mine ? '地雷' : certainMines.has(i) ? `${game.flags[i] ? '已插旗，' : ''}由已打开数字确定有雷，请插旗` : game.flags[i] ? '已插旗，尚未由数字确认' : open ? `已探索，周围${board.clues[i]}颗雷` : '未知格';
+    cell.setAttribute('aria-label', `${coord(i)}，${info}${i === board.goal ? '，带骨肉终点，保证安全' : ''}${i === board.start ? '，起点' : ''}${i === game.position && game.status !== 'running' ? '，小狗位置' : ''}`);
     cell.tabIndex = i === selectedIndex ? 0 : -1; cell.setAttribute('aria-disabled', String(game.status !== 'playing'));
   }
   $('runner').classList.toggle('running', game.status === 'running');
+  $('deduction-summary').textContent = certainMines.size ? `已由数字确定 ${certainMines.size} 个雷格（红色）；金色数字框是相关线索。` : '自动推理已开启：确定有雷的格子会显示红色高亮。';
   drawRoute(); if (game.status !== 'running') placeRunner(game.position);
 }
 function renderResult() {
@@ -102,7 +117,7 @@ function renderResult() {
   const won = game.status === 'won', total = Object.keys(completed).length, stars = starsFor(game);
   $('result-kicker').textContent = won ? total === 30 ? 'ALL ROUTES COMPLETE' : 'ROUTE COMPLETE' : 'ONE MORE TRY';
   $('result-title').textContent = won ? total === 30 ? '30 段路，全都被你找到了。' : '路已探明，顺利抵达。' : '这格藏着一颗雷。';
-  $('result-note').textContent = won ? `${game.steps} 次探雷 · 路线 ${game.runPath.length - 1} 格 · ${formatTime(game.elapsed)}。${game.rescues ? '使用 1 次保护，获得 2 星。' : '获得 3 星，线索不扣星。'}` : '人物仍在起点。地图已揭晓，可重试或切换轻松模式。';
+  $('result-note').textContent = won ? `${game.steps} 次探雷 · 路线 ${game.runPath.length - 1} 格 · ${formatTime(game.elapsed)}。${game.rescues ? '使用 1 次保护，获得 2 星。' : '获得 3 星，线索不扣星。'}` : '小狗仍在起点。地图已揭晓，可重试或切换轻松模式。';
   $('stars').textContent = won ? `${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '↻'; $('stars').setAttribute('aria-label', won ? `本关${stars}星` : '可以重试');
   $('result-button').textContent = won ? game.level === 29 ? '回看全部路线 →' : '下一段路 →' : '再试一次 →';
 }
@@ -110,7 +125,7 @@ function render() {
   const spec = LEVELS[game.level];
   $('level-label').textContent = `ROUTE ${String(game.level + 1).padStart(2, '0')} / 30`; $('level-title').textContent = `${spec.region} · ${spec.name}`;
   $('map-size').textContent = `${spec.cols} × ${spec.rows}`;
-  $('map-caption').textContent = game.status === 'running' ? '道路已连通 · 正在跑向终点' : game.status === 'won' ? '已抵达 · 你把线索连成了路' : game.status === 'lost' ? '本关结束 · 所有地雷已显示' : '人物在 S 等待 · 先探出一条安全道路';
+  $('map-caption').textContent = game.status === 'running' ? `道路已连通 · 最短路线 ${game.runPath.length - 1} 格`  : game.status === 'won' ? '已抵达 · 你把线索连成了路' : game.status === 'lost' ? '本关结束 · 所有地雷已显示' : '小狗在 S 等待 · 先探出一条安全道路';
   $('mine-total').textContent = String(game.board.mineCount).padStart(2, '0'); $('flag-total').textContent = String(game.flags.filter(Boolean).length).padStart(2, '0');
   $('step-total').textContent = String(game.steps).padStart(2, '0'); $('time-total').textContent = formatTime(game.elapsed);
   $('difficulty').textContent = game.maxShields ? `轻松 · 保护 ${game.shields}/1` : '标准 · 无保护';
@@ -127,7 +142,7 @@ function startRunAnimation() {
   $('map-scroll').classList.add('is-running'); $('runner').classList.add('running'); drawRoute();
   runProgress = 0; lastRunTick = performance.now(); placeRunner(path[0]);
   $('map-scroll').scrollIntoView({ block: 'start', behavior: 'smooth' });
-  setStatus('安全道路已完整连通！人物现在从 S 出发，沿已打开的格子跑向 E。');
+  setStatus('安全道路已完整连通！小狗沿已打开安全区域内的最短路线跑向带骨肉。');
   const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 900 : Math.max(2200, Math.min(7500, (path.length - 1) * 210));
   function frame(now) {
     if (token !== animationToken || game !== currentGame || game.status !== 'running') return;
@@ -149,7 +164,7 @@ function startLevel(level, shields = game.maxShields) {
   game = createGame(generateBoard(level), level, { shields }); selectedIndex = game.board.start; started = false; currentHint = null; levelShown = -1;
   lastTick = performance.now(); setMode('walk', false); render(); renderLevels(); persist();
   $('map-scroll').scrollLeft = 0; $('map-scroll').scrollTop = 0;
-  setStatus('每关至少有一条可行道路。先探雷，人物在起点等候；安全格四向连通 S 和 E 后自动出发。');
+  setStatus('每关至少有一条可行道路。先探雷，小狗在起点等候；安全格四向连通 S 和 E 后自动出发。');
   if (game.status === 'running') startRunAnimation();
 }
 function selectCell(index, focus = false) {
@@ -160,16 +175,16 @@ function flag(index) {
   if (game.status !== 'playing') return;
   if (!toggleFlag(game, index)) { setStatus(game.revealed[index] ? '已打开的安全格不能插旗。' : index === game.board.goal ? '终点保证安全，不需要插旗。' : '标记数达到雷数，请先检查并撤销不确定的旗帜。'); return; }
   started = true; currentHint = null; tone('flag'); render(); persist();
-  setStatus(game.flags[index] ? `${coord(index)} 已标记。人物仍在 S，旗帜只是判断，可随时撤销。` : `已移除 ${coord(index)} 的旗帜。`);
+  setStatus(game.flags[index] ? `${coord(index)} 已标记。小狗仍在 S，旗帜只是判断，可随时撤销。` : `已移除 ${coord(index)} 的旗帜。`);
 }
 function reveal(index) {
   const result = explore(game, index);
-  if (!result.ok) { setStatus(({ flagged: '这格已插旗，确认安全后先撤旗再探索。', revealed: '这里已经打开。继续探索未知格，人物仍在起点等你。', finished: '正在跑向终点或本关已结束；可重试或换一关。', outside: '这里不在地图内。' })[result.reason]); return; }
+  if (!result.ok) { setStatus(({ flagged: '这格已插旗，确认安全后先撤旗再探索。', revealed: '这里已经打开。继续探索未知格，小狗仍在起点等你。', finished: '正在跑向终点或本关已结束；可重试或换一关。', outside: '这里不在地图内。' })[result.reason]); return; }
   started = true; currentHint = null; tone(result.type); render(); persist();
   if (result.type === 'route') { startRunAnimation(); return; }
-  if (result.type === 'protected') setStatus(`${coord(index)} 有雷，保护已生效并自动插旗！人物没有移动，剩余保护 ${game.shields} 次。`, true);
-  else if (result.type === 'mine') { setStatus(`${coord(index)} 有雷，本关结束。人物仍在起点。`, true); $('result').scrollIntoView({ block: 'nearest' }); }
-  else setStatus(`${coord(index)} 已打开，周围八格有 ${game.board.clues[index]} 颗雷。人物在 S 等待，道路连通后才跑向终点。`);
+  if (result.type === 'protected') setStatus(`${coord(index)} 有雷，保护已生效并自动插旗！小狗没有移动，剩余保护 ${game.shields} 次。`, true);
+  else if (result.type === 'mine') { setStatus(`${coord(index)} 有雷，本关结束。小狗仍在起点。`, true); $('result').scrollIntoView({ block: 'nearest' }); }
+  else setStatus(`${coord(index)} 已打开，周围八格有 ${game.board.clues[index]} 颗雷。小狗在 S 等待，道路连通后才跑向终点。`);
 }
 function tick() {
   const now = performance.now(), delta = (now - lastTick) / 1000; lastTick = now;
@@ -216,7 +231,7 @@ document.addEventListener('keydown', e => {
   if (!dirs[key]) return;
   e.preventDefault(); const [dx,dy] = dirs[key], x = selectedIndex % game.board.cols + dx, y = Math.floor(selectedIndex / game.board.cols) + dy;
   if (x < 0 || y < 0 || x >= game.board.cols || y >= game.board.rows) return;
-  selectCell(y * game.board.cols + x, true); setStatus(`选中 ${coord(selectedIndex)}。Enter / 空格${mode === 'flag' ? '插旗或撤销' : '探雷'}，人物保持不动。`);
+  selectCell(y * game.board.cols + x, true); setStatus(`选中 ${coord(selectedIndex)}。Enter / 空格${mode === 'flag' ? '插旗或撤销' : '探雷'}，小狗保持不动。`);
 });
 setInterval(tick, 250); setInterval(() => { if (started && game.status === 'playing') persist(); }, 5000);
 document.addEventListener('visibilitychange', () => { lastTick = performance.now(); lastRunTick = performance.now(); persist(); });
@@ -224,7 +239,7 @@ window.addEventListener('pagehide', persist);
 new ResizeObserver(() => { if (cells.length) { drawRoute(); if (game.status !== 'running') placeRunner(game.position); } }).observe($('board'));
 render(); renderLevels(); persist();
 if (game.status === 'running') startRunAnimation();
-else if (game.status === 'lost') setStatus('上次触雷后已结束。人物仍在起点，可以重试或切换轻松模式。', true);
+else if (game.status === 'lost') setStatus('上次触雷后已结束。小狗仍在起点，可以重试或切换轻松模式。', true);
 else if (game.status === 'won') setStatus('已完成这条路线，继续下一关吧。');
-else if (restored?.migrated) setStatus('已保留旧版星级。新规则已生效，本关重新开始：先探通道路，人物再跑向终点。');
-else setStatus('每关至少有一条可行道路。先探雷，人物在 S 等待；安全格四向连通 S 和 E 后自动出发。');
+else if (restored?.migrated) setStatus('已保留旧版星级。新规则已生效，本关重新开始：先探通道路，小狗再跑向终点。');
+else setStatus('每关至少有一条可行道路。先探雷，小狗在 S 等待；安全格四向连通 S 和 E 后自动出发。');

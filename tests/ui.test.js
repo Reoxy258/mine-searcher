@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { createGame, makeBoard, explore, frontier } from '../src/engine.js';
+import { createGame, makeBoard, explore, frontier, deduce } from '../src/engine.js';
+import { MEAT_SVG } from '../src/visuals.js';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
@@ -20,11 +21,14 @@ test('UI document IDs are unique and every static controller target exists', () 
 test('handbook explains guaranteed routes, stationary exploration and delayed arrival', () => {
   assert.match(help, /每一关保证至少有一条从 S 到 E 的可行道路/);
   assert.match(help, /经过数字推理验证，无需猜雷/);
-  assert.match(help, /点击任意未插旗的未知格即可探索，人物保持不动/);
+  assert.match(help, /点击任意未插旗的未知格即可探索，小狗保持不动/);
   assert.match(help, /上下左右连通 S 与 E/);
   assert.match(help, /斜对角不算相连/);
   assert.match(help, /仅打开终点并不算通关/);
-  assert.match(help, /跑到 E，再显示通关结果/);
+  assert.match(help, /按最短路线跑到 E 的带骨肉旁，再显示通关结果/);
+  assert.match(help, /不要求按点击顺序经过每一格/);
+  assert.match(help, /高亮只根据可见数字推理/);
+  assert.match(help, /不把你的旗帜当作事实/);
   assert.doesNotMatch(help, /点击已打开的格子可自动寻路|沿已知安全路线走过去/);
 });
 
@@ -60,7 +64,7 @@ test('opened endpoint exposes its numerical clue as well as its E marker', () =>
   });
   const cells = Array.from({ length: 9 }, element), nodes = new Map();
   const scope = {
-    game, cells, frontier, selectedIndex: game.board.start, currentHint: null,
+    game, cells, frontier, deduce, MEAT_SVG, selectedIndex: game.board.start, currentHint: null,
     levelShown: game.level, coord: String, buildBoard() {}, drawRoute() {}, placeRunner() {},
     $(id) { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); },
   };
@@ -68,7 +72,7 @@ test('opened endpoint exposes its numerical clue as well as its E marker', () =>
   assert.ok(renderer, 'board rendering entrypoint must be identifiable');
   const render = () => runInNewContext(`function renderBoard() {${renderer[1]}\n}\nrenderBoard();`, scope);
   render();
-  assert.equal(cells[game.board.goal].textContent, 'E', 'unopened endpoint has no exposed clue');
+  assert.equal(cells[game.board.goal].textContent.trim(), 'E', 'unopened endpoint has no exposed clue');
   assert.equal(explore(game, game.board.goal).ok, true);
   assert.equal(game.status, 'playing', 'opening isolated E must not finish the level');
   assert.equal(game.board.clues[game.board.goal], 3);

@@ -36,24 +36,43 @@ function flood(game, index) {
     if (board.clues[i] === 0) pending.push(...neighbors(board, i));
   }
 }
-// A route uses only revealed, unflagged cells and always begins at S.
+// Minimum-step route inside the revealed, unflagged area. Among equally short
+// routes prefer fewer turns; clicks never become mandatory waypoints.
 export function knownPath(game, target) {
   const { board, flags, revealed } = game;
   if (!revealed[target] || flags[target] || !revealed[board.start] || flags[board.start]) return null;
-  const queue = [board.start], parents = new Map([[board.start, -1]]);
+  if (target === board.start) return [target];
+  const queue = [board.start], distance = Array(revealed.length).fill(-1);
+  distance[board.start] = 0;
   for (let q = 0; q < queue.length; q++) {
     const i = queue[q];
-    if (i === target) {
-      const path = [];
-      for (let j = i; j !== -1; j = parents.get(j)) path.unshift(j);
-      return path;
-    }
     for (const j of neighbors(board, i, false)) {
-      if (parents.has(j) || flags[j] || !revealed[j]) continue;
-      parents.set(j, i); queue.push(j);
+      if (distance[j] !== -1 || flags[j] || !revealed[j]) continue;
+      distance[j] = distance[i] + 1; queue.push(j);
     }
   }
-  return null;
+  if (distance[target] < 0) return null;
+  const turns = Array(revealed.length * 5).fill(Infinity), parents = Array(revealed.length * 5).fill(-1);
+  const startState = board.start * 5 + 4;
+  turns[startState] = 0;
+  for (const i of queue) {
+    if (distance[i] >= distance[target]) continue;
+    for (let previous = 0; previous < 5; previous++) {
+      const state = i * 5 + previous;
+      if (!Number.isFinite(turns[state])) continue;
+      for (const j of neighbors(board, i, false)) {
+        if (distance[j] !== distance[i] + 1) continue;
+        const direction = j === i - board.cols ? 0 : j === i + 1 ? 1 : j === i + board.cols ? 2 : 3;
+        const next = j * 5 + direction, cost = turns[state] + (previous === 4 || previous === direction ? 0 : 1);
+        if (cost < turns[next]) { turns[next] = cost; parents[next] = state; }
+      }
+    }
+  }
+  let endState = target * 5;
+  for (let direction = 1; direction < 4; direction++) if (turns[target * 5 + direction] < turns[endState]) endState = target * 5 + direction;
+  const path = [];
+  for (let state = endState; state !== -1; state = parents[state]) path.unshift(Math.floor(state / 5));
+  return path;
 }
 export function reachable(game) {
   const seen = new Set([game.board.start]), queue = [game.board.start];
@@ -142,7 +161,7 @@ export function getHint(game) {
   const { safe, mines } = deduce(game), edge = frontier(game);
   // Flags are player hypotheses; they are never treated as proof.
   for (const i of safe) if (game.flags[i]) return { type: 'unflag', index: i, text: '这格可由线索确定安全，请先移除旗帜。' };
-  for (const i of safe) if (edge.has(i) && !game.revealed[i]) return { type: 'safe', index: i, text: '根据已打开的数字，这一格一定安全。人物会等在起点，先把道路探出来。' };
+  for (const i of safe) if (edge.has(i) && !game.revealed[i]) return { type: 'safe', index: i, text: '根据已打开的数字，这一格一定安全。小狗会等在起点，先把道路探出来。' };
   for (const i of safe) if (!game.revealed[i]) return { type: 'safe', index: i, text: i === game.board.goal ? '终点保证安全，可以先打开，借用附近的数字。' : '这格可由已打开的数字证明安全，可以直接探索。' };
   for (const i of mines) if (!game.flags[i]) return { type: 'mine', index: i, text: '根据已打开的数字，这一格一定有雷。可以先插旗，再比较周围线索。' };
   return null;

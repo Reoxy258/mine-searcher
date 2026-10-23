@@ -1,6 +1,6 @@
 {
   "name": "pathfinder-minesweeper",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "寻路扫雷：用经典扫雷数字，推理一条通往终点的路。",
