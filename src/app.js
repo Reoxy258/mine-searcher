@@ -1,14 +1,15 @@
 import { LEVELS, CHAPTERS } from './levels.js';
-import { generateBoard, createGame, travel, toggleFlag, getHint, frontier, saveProgress, loadProgress } from './engine.js';
-
+import { generateBoard, createGame, explore, finishRun, starsFor, toggleFlag, getHint, frontier, saveProgress, loadProgress } from './engine.js';
 const $ = id => document.getElementById(id);
 let storage;
 try { storage = window.localStorage; } catch { storage = null; }
 const restored = loadProgress(storage);
 let game = restored?.game || createGame(generateBoard(0)), completed = restored?.completed || {};
-let mode = 'walk', currentHint = null, cells = [], started = game.steps > 0 || game.hints > 0 || game.elapsed > 0 || game.flags.some(Boolean);
+let mode = 'walk', currentHint = null, cells = [], selectedIndex = game.board.start;
+let started = game.steps > 0 || game.hints > 0 || game.elapsed > 0 || game.flags.some(Boolean);
 let sound = false, audio, lastTick = performance.now(), levelShown = -1;
-const formatTime = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+let animationToken = 0, animationFrame = 0, runProgress = 0, lastRunTick = 0;
+const formatTime = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const coord = i => `${String.fromCharCode(65 + i % game.board.cols)}${Math.floor(i / game.board.cols) + 1}`;
 const modalOpen = () => Boolean(document.querySelector('dialog[open]'));
 function persist() {
@@ -18,26 +19,24 @@ function persist() {
 function tone(type) {
   if (!sound) return;
   try {
-    audio ||= new (window.AudioContext || window.webkitAudioContext)();
-    audio.resume();
-    const frequencies = type === 'win' ? [440, 554, 659, 880] : type === 'mine' ? [140, 90] : type === 'flag' ? [420, 520] : [600];
-    frequencies.forEach((frequency, i) => {
-      const osc = audio.createOscillator(), gain = audio.createGain(), start = audio.currentTime + i * .09;
-      osc.type = 'sine'; osc.frequency.value = frequency;
-      gain.gain.setValueAtTime(.0001, start); gain.gain.exponentialRampToValueAtTime(.045, start + .01); gain.gain.exponentialRampToValueAtTime(.0001, start + .15);
-      osc.connect(gain); gain.connect(audio.destination); osc.start(start); osc.stop(start + .17);
+    audio ||= new (window.AudioContext || window.webkitAudioContext)(); audio.resume();
+    const notes = type === 'win' ? [440, 554, 659, 880] : type === 'mine' ? [140, 90] : type === 'protected' ? [330, 440] : [600];
+    notes.forEach((frequency, i) => {
+      const osc = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime + i * .09;
+      osc.frequency.value = frequency; gain.gain.setValueAtTime(.0001, t);
+      gain.gain.exponentialRampToValueAtTime(.04, t + .01); gain.gain.exponentialRampToValueAtTime(.0001, t + .15);
+      osc.connect(gain); gain.connect(audio.destination); osc.start(t); osc.stop(t + .17);
     });
-  } catch { /* Audio is optional; all feedback is visible as well. */ }
+  } catch { /* Sound is optional. */ }
 }
 function setStatus(text, danger = false) {
-  $('status').textContent = text;
-  $('status').parentElement.classList.toggle('danger', danger);
+  $('status').textContent = text; $('status').parentElement.classList.toggle('danger', danger);
 }
 function setMode(value, announce = true) {
   mode = value;
   $('walk-mode').setAttribute('aria-pressed', String(mode === 'walk'));
   $('flag-mode').setAttribute('aria-pressed', String(mode === 'flag'));
-  if (announce && game.status === 'playing') setStatus(mode === 'flag' ? '插旗模式：点击未知格标雷，再点一次撤销。按 F 或点「探路」返回。' : '探路模式：点击边界未知格探索；点击已知安全格自动走过去。');
+  if (announce && game.status === 'playing') setStatus(mode === 'flag' ? '插旗模式：点击未知格标记或撤销。F 返回探雷。人物仍留在 S。' : '探雷模式：点击任意未知格。人物在 S 等待，道路连通后才出发。');
 }
 function renderLevels() {
   const markup = CHAPTERS.map(chapter => {
@@ -46,202 +45,186 @@ function renderLevels() {
   }).join('');
   $('level-list').innerHTML = markup; $('dialog-level-list').innerHTML = markup;
   const total = Object.keys(completed).length;
-  $('completion').innerHTML = `${total} <small>/ 30</small>`;
-  $('progress-fill').style.width = `${total / 30 * 100}%`;
+  $('completion').innerHTML = `${total} <small>/ 30</small>`; $('progress-fill').style.width = `${total / 30 * 100}%`;
 }
 function buildBoard() {
   const { board } = game;
-  $('map-with-axis').classList.toggle('dense', board.cols >= 9);
-  $('pan-note').hidden = board.cols < 9;
+  $('map-with-axis').classList.toggle('dense', board.cols >= 9); $('pan-note').hidden = board.cols < 9;
   $('board').style.setProperty('--cols', board.cols); $('board').style.setProperty('--rows', board.rows);
   $('axis-top').style.setProperty('--cols', board.cols); $('axis-side').style.setProperty('--rows', board.rows);
   $('axis-top').innerHTML = Array.from({ length: board.cols }, (_, x) => `<span>${String.fromCharCode(65 + x)}</span>`).join('');
   $('axis-side').innerHTML = Array.from({ length: board.rows }, (_, y) => `<span>${y + 1}</span>`).join('');
-  $('board').innerHTML = Array.from({ length: board.cols * board.rows }, (_, i) => `<button class="cell" data-cell="${i}" tabindex="${i === game.position ? 0 : -1}"></button>`).join('');
-  cells = [...$('board').children];
-  $('trail').setAttribute('viewBox', `0 0 ${board.cols * 100} ${board.rows * 100}`);
-  levelShown = game.level;
+  $('board').innerHTML = Array.from({ length: board.cols * board.rows }, (_, i) => `<button class="cell" data-cell="${i}" tabindex="${i === selectedIndex ? 0 : -1}"></button>`).join('');
+  cells = [...$('board').children]; levelShown = game.level;
+}
+function centerOf(index) {
+  const c = cells[index]; return { x: c.offsetLeft + c.offsetWidth / 2, y: c.offsetTop + c.offsetHeight / 2, size: Math.min(c.offsetWidth, c.offsetHeight) * .62 };
+}
+function placeRunner(from, to = from, fraction = 0) {
+  if (!cells[from] || !cells[to]) return;
+  const a = centerOf(from), b = centerOf(to), x = a.x + (b.x - a.x) * fraction, y = a.y + (b.y - a.y) * fraction;
+  const runner = $('runner');
+  runner.style.left = `${x}px`; runner.style.top = `${y}px`; runner.style.width = `${a.size}px`; runner.style.height = `${a.size}px`;
+  runner.dataset.cell = String(fraction < .5 ? from : to);
+  if (game.status === 'running') {
+    const view = $('map-scroll'), axisWidth = $('axis-side').offsetWidth + 2;
+    view.scrollLeft = Math.max(0, x + axisWidth - view.clientWidth / 2);
+    view.scrollTop = Math.max(0, y + 20 - view.clientHeight / 2);
+  }
+}
+function drawRoute() {
+  const route = game.runPath, board = $('board');
+  $('trail').setAttribute('viewBox', `0 0 ${board.clientWidth} ${board.clientHeight}`);
+  $('trail').innerHTML = route.length ? `<polyline points="${route.map(i => { const p = centerOf(i); return `${p.x},${p.y}`; }).join(' ')}"/>` : '';
 }
 function renderBoard() {
-  const { board } = game, edge = game.status === 'playing' ? frontier(game) : new Set();
   if (levelShown !== game.level) buildBoard();
-  const anyFocus = $('board').contains(document.activeElement);
+  const { board } = game, edge = game.status === 'playing' ? frontier(game) : new Set(), route = new Set(game.runPath);
   $('board').classList.toggle('finished', game.status !== 'playing');
-  $('board').setAttribute('aria-label', `第${game.level + 1}关，${board.cols}列${board.rows}行，当前位置${coord(game.position)}。方向键或WASD行走，F切换插旗模式。`);
-  const focusIndex = anyFocus ? Number(document.activeElement.dataset.cell) : game.position;
+  $('board').setAttribute('aria-label', `第${game.level + 1}关。人物${game.status === 'running' ? '正在沿安全道路跑向终点' : game.status === 'won' ? '已抵达终点' : '在起点S等待'}。方向键选格，Enter探雷，F切换插旗。`);
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i], open = game.revealed[i], mine = game.status === 'lost' && board.mines[i];
-    const classes = ['cell', board.cols >= 10 ? 'compact' : ''];
-    if (open) classes.push('open', `n${board.clues[i]}`); else if (!game.flags[i] && !mine && i !== board.goal) classes.push('unknown');
-    if (edge.has(i) && !game.flags[i] && i !== board.goal) classes.push('edge');
-    if (game.flags[i]) classes.push('flagged');
-    if (i === board.start) classes.push('start');
-    if (i === board.goal) classes.push('goal');
-    if (mine) classes.push('bomb');
-    if (i === game.exploded) classes.push('exploded');
-    if (game.status === 'lost' && game.flags[i] && !board.mines[i]) classes.push('wrong-flag');
-    if (i === game.position && game.status !== 'lost') classes.push('player');
-    if (currentHint?.index === i) classes.push('hint-cell');
-    cell.className = classes.join(' ');
-    let content = mine ? '✳' : game.flags[i] ? '⚑' : i === board.goal ? 'E' : open && board.clues[i] ? String(board.clues[i]) : i === board.start ? 'S' : '';
-    if (i === game.position && game.status !== 'lost') content = `${board.clues[i] ? `<small class="under-clue">${board.clues[i]}</small>` : ''}<span class="scout" aria-hidden="true"></span>`;
-    cell.innerHTML = content;
+    cell.className = ['cell', board.cols >= 10 ? 'compact' : '', open ? `open n${board.clues[i]}` : !game.flags[i] && !mine && i !== board.goal ? 'unknown' : '', edge.has(i) && !game.flags[i] && i !== board.goal ? 'edge' : '', game.flags[i] ? 'flagged' : '', i === board.start ? 'start' : '', i === board.goal ? 'goal' : '', mine ? 'bomb' : '', i === game.exploded ? 'exploded' : '', game.status === 'lost' && game.flags[i] && !board.mines[i] ? 'wrong-flag' : '', route.has(i) ? 'route-cell' : '', i === game.position ? 'player' : '', currentHint?.index === i ? 'hint-cell' : ''].join(' ');
+    cell.textContent = mine ? '✳' : game.flags[i] ? '⚑' : i === board.goal ? 'E' : i === board.start ? 'S' : open && board.clues[i] ? String(board.clues[i]) : '';
+    if (i === board.goal && open) cell.innerHTML = `${board.clues[i] || ''}<small class="endpoint-label" aria-hidden="true">E</small>`;
     const info = mine ? '地雷' : game.flags[i] ? '已插旗' : open ? `已探索，周围${board.clues[i]}颗雷` : '未知格';
-    cell.setAttribute('aria-label', `${coord(i)}，${info}${i === board.goal ? '，终点，保证安全' : ''}${i === board.start ? '，起点' : ''}${i === game.position ? '，你的位置' : ''}${edge.has(i) ? '，可探索' : ''}`);
-    cell.tabIndex = i === focusIndex ? 0 : -1;
-    cell.setAttribute('aria-disabled', String(game.status !== 'playing'));
+    cell.setAttribute('aria-label', `${coord(i)}，${info}${i === board.goal ? '，终点，保证安全' : ''}${i === board.start ? '，起点' : ''}${i === game.position && game.status !== 'running' ? '，人物位置' : ''}`);
+    cell.tabIndex = i === selectedIndex ? 0 : -1; cell.setAttribute('aria-disabled', String(game.status !== 'playing'));
   }
-  // Only show recent footsteps to keep long routes readable.
-  const route = game.trail.slice(-22), bx = board.cols * 100, by = board.rows * 100;
-  const points = route.map(i => `${(i % board.cols + .5) * ((bx - 14) / board.cols) + 7},${(Math.floor(i / board.cols) + .5) * ((by - 14) / board.rows) + 7}`).join(' ');
-  $('trail').innerHTML = `<polyline points="${points}"/>`;
-  if (anyFocus) cells[focusIndex]?.focus({ preventScroll: true });
+  $('runner').classList.toggle('running', game.status === 'running');
+  drawRoute(); if (game.status !== 'running') placeRunner(game.position);
 }
 function renderResult() {
-  const done = game.status !== 'playing';
-  $('result').hidden = !done;
-  $('result').classList.toggle('lost', game.status === 'lost');
-  $('hint').disabled = done; $('walk-mode').disabled = done; $('flag-mode').disabled = done;
+  const done = game.status === 'won' || game.status === 'lost';
+  $('result').hidden = !done; $('result').classList.toggle('lost', game.status === 'lost');
+  $('hint').disabled = game.status !== 'playing'; $('walk-mode').disabled = game.status !== 'playing'; $('flag-mode').disabled = game.status !== 'playing';
   if (!done) return;
-  const won = game.status === 'won', total = Object.keys(completed).length, stars = game.hints === 0 ? 3 : game.hints <= 3 ? 2 : 1;
-  $('result-kicker').textContent = won ? (total === 30 ? 'ALL ROUTES COMPLETE' : 'ROUTE COMPLETE') : 'ONE MORE TRY';
-  $('result-title').textContent = won ? (total === 30 ? '30 段路，全都被你找到了。' : '这条路，被你找到了。') : '这一步，踩到了小意外。';
-  $('result-note').textContent = won ? `${game.steps} 步 · ${formatTime(game.elapsed)} · ${game.hints ? `使用 ${game.hints} 次线索` : '全程独立推理'}。` : `雷区已揭晓。地图不变，带着刚才的发现再走一次。`;
-  $('stars').textContent = won ? `${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '↻';
-  $('stars').setAttribute('aria-label', won ? `本关${stars}星` : '可以重试');
-  $('result-button').textContent = won ? (game.level === 29 ? '回看全部路线 →' : '下一段路 →') : '再试一次 →';
+  const won = game.status === 'won', total = Object.keys(completed).length, stars = starsFor(game);
+  $('result-kicker').textContent = won ? total === 30 ? 'ALL ROUTES COMPLETE' : 'ROUTE COMPLETE' : 'ONE MORE TRY';
+  $('result-title').textContent = won ? total === 30 ? '30 段路，全都被你找到了。' : '路已探明，顺利抵达。' : '这格藏着一颗雷。';
+  $('result-note').textContent = won ? `${game.steps} 次探雷 · 路线 ${game.runPath.length - 1} 格 · ${formatTime(game.elapsed)}。${game.rescues ? '使用 1 次保护，获得 2 星。' : '获得 3 星，线索不扣星。'}` : '人物仍在起点。地图已揭晓，可重试或切换轻松模式。';
+  $('stars').textContent = won ? `${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : '↻'; $('stars').setAttribute('aria-label', won ? `本关${stars}星` : '可以重试');
+  $('result-button').textContent = won ? game.level === 29 ? '回看全部路线 →' : '下一段路 →' : '再试一次 →';
 }
 function render() {
   const spec = LEVELS[game.level];
-  $('level-label').textContent = `ROUTE ${String(game.level + 1).padStart(2, '0')} / 30`;
-  $('level-title').textContent = `${spec.region} · ${spec.name}`;
+  $('level-label').textContent = `ROUTE ${String(game.level + 1).padStart(2, '0')} / 30`; $('level-title').textContent = `${spec.region} · ${spec.name}`;
   $('map-size').textContent = `${spec.cols} × ${spec.rows}`;
-  $('map-caption').textContent = game.status === 'won' ? '已抵达 · 你把线索连成了路' : game.status === 'lost' ? '本关结束 · 所有地雷已显示' : '探索中 · 从左下出发，向右上前进';
-  $('mine-total').textContent = String(game.board.mineCount).padStart(2, '0');
-  $('flag-total').textContent = String(game.flags.filter(Boolean).length).padStart(2, '0');
-  $('step-total').textContent = String(game.steps).padStart(2, '0');
-  $('time-total').textContent = formatTime(game.elapsed);
+  $('map-caption').textContent = game.status === 'running' ? '道路已连通 · 正在跑向终点' : game.status === 'won' ? '已抵达 · 你把线索连成了路' : game.status === 'lost' ? '本关结束 · 所有地雷已显示' : '人物在 S 等待 · 先探出一条安全道路';
+  $('mine-total').textContent = String(game.board.mineCount).padStart(2, '0'); $('flag-total').textContent = String(game.flags.filter(Boolean).length).padStart(2, '0');
+  $('step-total').textContent = String(game.steps).padStart(2, '0'); $('time-total').textContent = formatTime(game.elapsed);
+  $('difficulty').textContent = game.maxShields ? `轻松 · 保护 ${game.shields}/1` : '标准 · 无保护';
+  $('difficulty').setAttribute('aria-label', `${game.maxShields ? `轻松模式，剩余${game.shields}次保护` : '标准模式，无触雷保护'}，点击切换难度`);
   renderBoard(); renderResult();
 }
-function startLevel(level) {
+function cancelAnimation() {
+  animationToken++; cancelAnimationFrame(animationFrame); $('map-scroll').classList.remove('is-running'); $('runner').classList.remove('running');
+}
+function startRunAnimation() {
+  cancelAnimation();
+  const currentGame = game, token = animationToken, path = [...game.runPath];
+  if (game.status !== 'running' || path.length < 2) return;
+  $('map-scroll').classList.add('is-running'); $('runner').classList.add('running'); drawRoute();
+  runProgress = 0; lastRunTick = performance.now(); placeRunner(path[0]);
+  $('map-scroll').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  setStatus('安全道路已完整连通！人物现在从 S 出发，沿已打开的格子跑向 E。');
+  const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 900 : Math.max(2200, Math.min(7500, (path.length - 1) * 210));
+  function frame(now) {
+    if (token !== animationToken || game !== currentGame || game.status !== 'running') return;
+    const delta = now - lastRunTick; lastRunTick = now;
+    if (!document.hidden && !modalOpen()) runProgress = Math.min(1, runProgress + delta / duration);
+    const distance = runProgress * (path.length - 1), segment = Math.min(path.length - 2, Math.floor(distance));
+    placeRunner(path[segment], path[segment + 1], distance - segment);
+    if (runProgress < 1) { animationFrame = requestAnimationFrame(frame); return; }
+    if (!finishRun(currentGame)) return;
+    cancelAnimation(); tone('win'); completed[game.level] = Math.max(completed[game.level] || 0, starsFor(game));
+    render(); renderLevels(); persist(); setStatus('已安全抵达终点！只要探通一条路，就能过关。');
+    $('result').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  animationFrame = requestAnimationFrame(frame);
+}
+function startLevel(level, shields = game.maxShields) {
   if (!LEVELS[level]) return;
-  // Close modals before resetting the clock; no stale dialog pauses a fresh run.
-  document.querySelectorAll('dialog[open]').forEach(d => d.close());
-  game = createGame(generateBoard(level), level); started = false; currentHint = null; levelShown = -1;
+  cancelAnimation(); document.querySelectorAll('dialog[open]').forEach(d => d.close());
+  game = createGame(generateBoard(level), level, { shields }); selectedIndex = game.board.start; started = false; currentHint = null; levelShown = -1;
   lastTick = performance.now(); setMode('walk', false); render(); renderLevels(); persist();
-  setStatus(level === 0 ? '起点周围已经展开。数字为 1，表示周围八格中恰好藏着一颗雷。' : LEVELS[level].note);
+  $('map-scroll').scrollLeft = 0; $('map-scroll').scrollTop = 0;
+  setStatus('每关至少有一条可行道路。先探雷，人物在起点等候；安全格四向连通 S 和 E 后自动出发。');
+  if (game.status === 'running') startRunAnimation();
+}
+function selectCell(index, focus = false) {
+  selectedIndex = index; cells.forEach((c, i) => { c.tabIndex = i === index ? 0 : -1; });
+  if (focus) cells[index].focus();
 }
 function flag(index) {
   if (game.status !== 'playing') return;
-  if (!toggleFlag(game, index)) {
-    setStatus(game.revealed[index] ? '已打开的格子不能插旗。' : index === game.board.goal ? '终点保证安全，不需要插旗。' : '旗帜数量已达到本关雷数；可以先撤销其他标记。');
-    return;
-  }
+  if (!toggleFlag(game, index)) { setStatus(game.revealed[index] ? '已打开的安全格不能插旗。' : index === game.board.goal ? '终点保证安全，不需要插旗。' : '标记数达到雷数，请先检查并撤销不确定的旗帜。'); return; }
   started = true; currentHint = null; tone('flag'); render(); persist();
-  setStatus(game.flags[index] ? `${coord(index)} 已标记。旗帜是你的判断，探索前记得切回「探路」。` : `已移除 ${coord(index)} 的旗帜。`);
+  setStatus(game.flags[index] ? `${coord(index)} 已标记。人物仍在 S，旗帜只是判断，可随时撤销。` : `已移除 ${coord(index)} 的旗帜。`);
 }
-function move(index) {
-  const result = travel(game, index);
-  if (!result.ok) {
-    const reasons = { flagged: '这格已插旗。若确认安全，请切换插旗模式撤销标记。', unreachable: '暂时走不到这里。请从虚线边界逐步探索，只能上下左右行走。', outside: '到地图边缘了，试试另一个方向。', same: '你已经在这里了。数字是周围八格的雷数。', finished: '本关已结束。可以重试或选择另一条路线。' };
-    setStatus(reasons[result.reason], false); return;
-  }
-  started = true; currentHint = null; tone(result.type);
-  if (game.status === 'won') {
-    const stars = game.hints === 0 ? 3 : game.hints <= 3 ? 2 : 1;
-    completed[game.level] = Math.max(completed[game.level] || 0, stars); renderLevels();
-    setStatus('已安全抵达终点！不必翻开所有格子，这条路就足够了。');
-  } else if (game.status === 'lost') setStatus(`${coord(game.position)} 藏着一颗雷。本关结束，可以查看雷区并重试。`, true);
-  else setStatus(`抵达 ${coord(game.position)}。${game.board.clues[game.position] ? `周围八格中有 ${game.board.clues[game.position]} 颗雷，比较相邻数字再走下一步。` : '周围没有雷，安全区域已经自动展开。'}`);
-  render(); persist();
-  cells.forEach((cell, i) => { cell.tabIndex = i === game.position ? 0 : -1; });
-  cells[game.position].focus({ preventScroll: true });
-  cells[game.position].scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  if (game.status !== 'playing') $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+function reveal(index) {
+  const result = explore(game, index);
+  if (!result.ok) { setStatus(({ flagged: '这格已插旗，确认安全后先撤旗再探索。', revealed: '这里已经打开。继续探索未知格，人物仍在起点等你。', finished: '正在跑向终点或本关已结束；可重试或换一关。', outside: '这里不在地图内。' })[result.reason]); return; }
+  started = true; currentHint = null; tone(result.type); render(); persist();
+  if (result.type === 'route') { startRunAnimation(); return; }
+  if (result.type === 'protected') setStatus(`${coord(index)} 有雷，保护已生效并自动插旗！人物没有移动，剩余保护 ${game.shields} 次。`, true);
+  else if (result.type === 'mine') { setStatus(`${coord(index)} 有雷，本关结束。人物仍在起点。`, true); $('result').scrollIntoView({ block: 'nearest' }); }
+  else setStatus(`${coord(index)} 已打开，周围八格有 ${game.board.clues[index]} 颗雷。人物在 S 等待，道路连通后才跑向终点。`);
 }
-function showDialog(id) {
-  if (modalOpen()) return;
-  tick(); persist(); $(id).showModal();
+function tick() {
+  const now = performance.now(), delta = (now - lastTick) / 1000; lastTick = now;
+  if (started && game.status === 'playing' && !document.hidden && !modalOpen()) game.elapsed += delta;
+  $('time-total').textContent = formatTime(game.elapsed);
 }
-$('board').addEventListener('click', event => {
-  const cell = event.target.closest('[data-cell]');
-  if (!cell || modalOpen()) return;
-  const i = Number(cell.dataset.cell);
-  mode === 'flag' ? flag(i) : move(i);
-});
-$('board').addEventListener('contextmenu', event => {
-  const cell = event.target.closest('[data-cell]');
-  if (!cell || modalOpen()) return;
-  event.preventDefault(); flag(Number(cell.dataset.cell));
-});
+function showDialog(id) { if (!modalOpen()) { tick(); persist(); $(id).showModal(); } }
+$('board').addEventListener('click', e => { const cell = e.target.closest('[data-cell]'); if (!cell || modalOpen()) return; const i = Number(cell.dataset.cell); selectCell(i); mode === 'flag' ? flag(i) : reveal(i); });
+$('board').addEventListener('contextmenu', e => { const cell = e.target.closest('[data-cell]'); if (!cell || modalOpen()) return; e.preventDefault(); selectCell(Number(cell.dataset.cell)); flag(selectedIndex); });
 $('walk-mode').addEventListener('click', () => setMode('walk'));
 $('flag-mode').addEventListener('click', () => setMode(mode === 'flag' ? 'walk' : 'flag'));
 $('hint').addEventListener('click', () => {
   if (game.status !== 'playing') return;
-  const hint = getHint(game);
-  if (!hint) { setStatus('先比较虚线边界附近的数字，或检查是否有旗帜挡住了已知安全路线。'); return; }
+  const hint = getHint(game); if (!hint) { setStatus('比较相邻数字，或检查是否有误插的旗帜挡住安全格。'); return; }
   if (currentHint?.index !== hint.index || currentHint?.type !== hint.type) game.hints++;
-  currentHint = hint; started = true; render(); persist();
-  cells[hint.index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  setStatus(`${coord(hint.index)}：${hint.text}`);
+  currentHint = hint; started = true; render(); persist(); cells[hint.index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  setStatus(`${coord(hint.index)}：${hint.text}（免费，不扣星）`);
 });
-$('retry').addEventListener('click', () => game.status === 'playing' && started ? showDialog('retry-dialog') : startLevel(game.level));
+$('retry').addEventListener('click', () => (game.status === 'playing' && started) || game.status === 'running' ? showDialog('retry-dialog') : startLevel(game.level));
 $('confirm-retry').addEventListener('click', () => startLevel(game.level));
+$('difficulty').addEventListener('click', () => {
+  $('difficulty-title').textContent = game.maxShields ? '切换为标准模式？' : '切换为轻松模式？';
+  $('difficulty-note').textContent = game.maxShields ? '标准模式无触雷保护。切换会重开本关，已获得的星星保留。' : '轻松模式每关提供 1 次触雷保护，自动标雷并继续。切换会重开本关，已获得的星星保留。';
+  showDialog('difficulty-dialog');
+});
+$('confirm-difficulty').addEventListener('click', () => startLevel(game.level, game.maxShields ? 0 : 1));
 $('result-button').addEventListener('click', () => game.status === 'lost' ? startLevel(game.level) : game.level === 29 ? showDialog('levels-dialog') : startLevel(game.level + 1));
 for (const id of ['help-open', 'tip-help']) $(id).addEventListener('click', () => showDialog('help-dialog'));
-$('levels-open').addEventListener('click', () => showDialog('levels-dialog'));
-$('pause').addEventListener('click', () => showDialog('pause-dialog'));
-for (const list of [$('level-list'), $('dialog-level-list')]) list.addEventListener('click', event => {
-  const button = event.target.closest('[data-level]');
-  if (!button) return;
-  const level = Number(button.dataset.level);
-  if (level === game.level) { $('levels-dialog').close(); return; }
-  startLevel(level);
-});
+$('levels-open').addEventListener('click', () => showDialog('levels-dialog')); $('pause').addEventListener('click', () => showDialog('pause-dialog'));
+for (const id of ['level-list', 'dialog-level-list']) $(id).addEventListener('click', e => { const b = e.target.closest('[data-level]'); if (!b) return; const level = Number(b.dataset.level); if (level === game.level) { $('levels-dialog').close(); return; } startLevel(level); });
 for (const dialog of document.querySelectorAll('dialog')) {
-  dialog.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => dialog.close()));
-  dialog.addEventListener('close', () => { lastTick = performance.now(); });
+  dialog.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => dialog.close()));
+  dialog.addEventListener('close', () => { lastTick = performance.now(); lastRunTick = performance.now(); });
 }
-$('sound').addEventListener('click', () => {
-  sound = !sound; $('sound').setAttribute('aria-pressed', String(sound));
-  $('sound').setAttribute('aria-label', sound ? '关闭音效' : '开启音效');
-  $('sound').title = sound ? '关闭音效' : '开启音效';
-  $('sound').querySelector('.sound-off').hidden = sound; tone('flag');
-});
-document.addEventListener('keydown', event => {
-  if (event.ctrlKey || event.altKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
-  if (modalOpen()) return;
-  const key = event.key.toLowerCase();
-  if (key === 'p' || key === 'escape') { event.preventDefault(); showDialog('pause-dialog'); return; }
+$('sound').addEventListener('click', () => { sound = !sound; $('sound').setAttribute('aria-pressed', String(sound)); $('sound').setAttribute('aria-label', sound ? '关闭音效' : '开启音效'); $('sound').title = sound ? '关闭音效' : '开启音效'; $('sound').querySelector('.sound-off').hidden = sound; tone('flag'); });
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.altKey || e.metaKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || modalOpen()) return;
+  const key = e.key.toLowerCase();
+  if (key === 'p' || key === 'escape') { e.preventDefault(); showDialog('pause-dialog'); return; }
   if (game.status !== 'playing') return;
-  if (key === 'f') { event.preventDefault(); setMode(mode === 'flag' ? 'walk' : 'flag'); return; }
-  if (key === 'g') { event.preventDefault(); setMode('walk'); return; }
-  const dirs = { arrowup: [0, -1], w: [0, -1], arrowdown: [0, 1], s: [0, 1], arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0] };
+  if (key === 'f') { e.preventDefault(); setMode(mode === 'flag' ? 'walk' : 'flag'); return; }
+  if (key === 'g') { e.preventDefault(); setMode('walk'); return; }
+  const dirs = { arrowup: [0,-1], w: [0,-1], arrowdown: [0,1], s: [0,1], arrowleft: [-1,0], a: [-1,0], arrowright: [1,0], d: [1,0] };
   if (!dirs[key]) return;
-  event.preventDefault();
-  if (event.repeat) return;
-  const selecting = mode === 'flag' || event.shiftKey;
-  const selected = selecting && event.target.dataset.cell !== undefined ? Number(event.target.dataset.cell) : game.position;
-  const [dx, dy] = dirs[key], x = selected % game.board.cols + dx, y = Math.floor(selected / game.board.cols) + dy;
-  if (x < 0 || x >= game.board.cols || y < 0 || y >= game.board.rows) { setStatus('已经到地图边缘了。'); return; }
-  const target = y * game.board.cols + x;
-  if (selecting) {
-    cells.forEach((cell, i) => { cell.tabIndex = i === target ? 0 : -1; });
-    cells[target].focus();
-    setStatus(`选中 ${coord(target)}。${mode === 'flag' ? '按 Enter / 空格插旗或撤销；F 返回探路。' : '按 Enter / 空格探索，F 切换插旗。'}`);
-  } else move(target);
+  e.preventDefault(); const [dx,dy] = dirs[key], x = selectedIndex % game.board.cols + dx, y = Math.floor(selectedIndex / game.board.cols) + dy;
+  if (x < 0 || y < 0 || x >= game.board.cols || y >= game.board.rows) return;
+  selectCell(y * game.board.cols + x, true); setStatus(`选中 ${coord(selectedIndex)}。Enter / 空格${mode === 'flag' ? '插旗或撤销' : '探雷'}，人物保持不动。`);
 });
-function tick() {
-  const now = performance.now(), delta = (now - lastTick) / 1000;
-  lastTick = now;
-  if (started && game.status === 'playing' && !document.hidden && !modalOpen()) game.elapsed += delta;
-  $('time-total').textContent = formatTime(game.elapsed);
-}
-setInterval(tick, 250);
-setInterval(() => { if (started && game.status === 'playing') persist(); }, 5000);
-document.addEventListener('visibilitychange', () => { lastTick = performance.now(); persist(); });
+setInterval(tick, 250); setInterval(() => { if (started && game.status === 'playing') persist(); }, 5000);
+document.addEventListener('visibilitychange', () => { lastTick = performance.now(); lastRunTick = performance.now(); persist(); });
 window.addEventListener('pagehide', persist);
+new ResizeObserver(() => { if (cells.length) { drawRoute(); if (game.status !== 'running') placeRunner(game.position); } }).observe($('board'));
 render(); renderLevels(); persist();
-if (game.status === 'lost') setStatus('上次在这里踩到了雷。地图已揭晓，可以重试。', true);
-else if (game.status === 'won') setStatus('这条路线已经抵达，继续下一段路吧。');
-else if (restored) setStatus('已恢复上次的地图与脚步，继续慢慢推理。');
+if (game.status === 'running') startRunAnimation();
+else if (game.status === 'lost') setStatus('上次触雷后已结束。人物仍在起点，可以重试或切换轻松模式。', true);
+else if (game.status === 'won') setStatus('已完成这条路线，继续下一关吧。');
+else if (restored?.migrated) setStatus('已保留旧版星级。新规则已生效，本关重新开始：先探通道路，人物再跑向终点。');
+else setStatus('每关至少有一条可行道路。先探雷，人物在 S 等待；安全格四向连通 S 和 E 后自动出发。');

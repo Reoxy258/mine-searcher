@@ -13,3 +13,16 @@
 /* Readable clue colors, including compact mobile cells. */
 :root{--muted:#69786f}.cell.open{color:#286d6b}.cell.n2{color:#93601c}.cell.n3{color:#a64a36}.cell.n4,.cell.n5,.cell.n6,.cell.n7,.cell.n8{color:#775180}
 .cell.goal{color:#775822}.cell.flagged{color:#855717}.level-button{color:#69785b}.help-steps p,.dialog-lead{color:#66745f}.clue-card p:not(.eyebrow){color:#637252}.map-key{color:#667b5f}.axis-top,.axis-side{color:#6e7f65}
+/* Scout waits at S during exploration; only the final safe route is animated. */
+.game-badges{display:flex;align-items:flex-end;flex-direction:column;gap:6px}.difficulty-button{border:1px solid #cddfc7;background:#edf5e8;color:#496c42;padding:7px 9px;border-radius:6px;min-height:32px;font-size:10px;white-space:nowrap}
+.runner{position:absolute;z-index:6;pointer-events:none;transform:translate(-50%,-50%);min-width:14px;min-height:14px}
+.runner .scout{display:block;position:absolute;inset:0;border-radius:50%;background:#187569;box-shadow:0 2px 4px #07534430,0 0 0 3px #ffffffe0}
+.runner .scout::before{content:"";position:absolute;left:35%;top:15%;width:25%;height:25%;border:2px solid #f6fff1;border-radius:50%}
+.runner .scout::after{content:"";position:absolute;left:31%;bottom:18%;width:38%;height:25%;background:#f6fff1;border-radius:50% 50% 4px 4px}
+.runner.running .scout{animation:scoutRun .25s ease-in-out infinite}.cell.route-cell{background:#e2efd8;border-color:#bed0b0}.cell.route-cell.goal{background:#efe0a8}
+.map-scroll.is-running{max-height:65vh;overflow:auto;scroll-behavior:auto}.trail{opacity:.4}.trail polyline{stroke-width:4;stroke:#63904c}.game-card:has(.runner.running) .board{pointer-events:none}
+@keyframes scoutRun{0%,100%{transform:translateY(0) rotate(-7deg)}50%{transform:translateY(-3px) rotate(7deg)}}
+@media(max-width:760px){.game-heading{gap:10px}.game-badges .logic-badge{font-size:8px;padding:5px}.difficulty-button{font-size:9px;padding:6px}.runner .scout{box-shadow:0 2px 3px #07534430,0 0 0 2px #ffffffe0}.runner .scout::before{border-width:1.5px}.mode-switch button{padding-left:10px;padding-right:10px}.tool-actions{gap:10px}.tool-button{font-size:10px}.map-scroll.is-running{max-height:65dvh}}
+@media(max-width:370px){.game-heading h2{font-size:14px}.game-badges .logic-badge{font-size:7px}.game-toolbar{padding-left:10px;padding-right:10px}.mode-switch button{padding-left:8px;padding-right:8px}.tool-actions{gap:8px}.tool-button>span{margin-right:2px}}
+@media(prefers-reduced-motion:reduce){.runner.running .scout{animation:none}}
+.cell .endpoint-label{position:absolute;right:3px;bottom:2px;font:700 8px/1 sans-serif;color:#775822}.cell.compact .endpoint-label{right:2px;font-size:7px}
